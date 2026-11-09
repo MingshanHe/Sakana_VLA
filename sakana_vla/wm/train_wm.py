@@ -99,6 +99,7 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cuda", help="cuda, or cpu for a smoke test")
     ap.add_argument("--max-files", type=int, default=0, help="smoke test: use only the first N replay files")
+    ap.add_argument("--repeat-onpolicy", type=int, default=1, help="oversample on-policy (source=policy) training episodes")
     args = ap.parse_args()
     torch.manual_seed(args.seed)
     out = Path(args.out)
@@ -109,7 +110,10 @@ def main():
     val_f, train_f = [], []
     for f in files:
         meta = file_meta(f)
-        (val_f if meta.get("subset") == args.val_subset or meta.get("house") in args.val_houses else train_f).append(f)
+        if meta.get("subset") == args.val_subset or meta.get("house") in args.val_houses:
+            val_f.append(f)
+        else:
+            train_f += [f] * (args.repeat_onpolicy if meta.get("source") == "policy" else 1)
     if not val_f:  # no unseen-house episodes in the data: hold out every 20th training episode
         val_f = train_f[::20]
         train_f = [f for f in train_f if f not in set(val_f)]
