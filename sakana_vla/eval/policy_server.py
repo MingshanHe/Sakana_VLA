@@ -2,7 +2,8 @@
 
     PYTHONNOUSERSITE=1 python -m sakana_vla.eval.policy_server --run runs/v0_nano_stageA --socket /tmp/sakana_vla.sock
 Listens on a node-local Unix domain socket only (no network port). Normally spawned by closed_loop.py.
-Request: {"images": (B,H,W,3) uint8, "instructions": [str], "states": (B,5) raw state} -> (B, H, 5) raw increments.
+Request: {"images": (B,H,W,3) uint8, "instructions": [str], "states": (B,5) raw state, "seeds": [int] | None,
+          "n_samples": N (default 1)} -> (B, H, 5) raw increments, or (B, N, H, 5) candidates when N > 1.
 """
 import argparse
 import json
@@ -59,12 +60,13 @@ def main():
                               "raw_actions": np.zeros((targs["horizon"], 5), np.float32), "index": 0}
                              for im, tx, st in zip(imgs, instr, np.asarray(req["states"], np.float32))]
                     batch = {k: (v.cuda() if torch.is_tensor(v) else v) for k, v in collate(items).items()}
+                    n_samples = int(req.get("n_samples", 1))
                     noise = None
-                    if req.get("seeds") is not None:  # per-episode fixed source noise: consistent mode across replans
-                        noise = torch.stack([torch.randn(targs["horizon"], 5, generator=torch.Generator().manual_seed(int(sd)))
-                                             for sd in req["seeds"]]).cuda()
+                    if req.get("seeds") is not None:  # per-(episode, candidate) fixed source noise: consistent modes across replans
+                        noise = torch.stack([torch.randn(targs["horizon"], 5, generator=torch.Generator().manual_seed(int(sd) + 7919 * k))
+                                             for sd in req["seeds"] for k in range(n_samples)]).cuda()
                     with torch.autocast("cuda", dtype=torch.bfloat16):
-                        x = model.sample(batch, steps=args.denoise_steps, noise=noise)
+                        x = model.sample(batch, steps=args.denoise_steps, noise=noise, n_samples=n_samples)
                     conn.send(denormalize_actions(x.float().cpu().numpy(), stats))
             except EOFError:
                 pass

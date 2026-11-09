@@ -77,13 +77,20 @@ class SakanaVLA(nn.Module):
         return loss, metrics
 
     @torch.no_grad()
-    def sample(self, batch, steps=5, noise=None):
+    def sample(self, batch, steps=5, noise=None, n_samples=1):
+        """(B, H, A) normalized chunk; with n_samples > 1: (B, n, H, A) candidates from different noise, sharing one
+        prefix pass. `noise`, if given, is (B * n, H, A) with the n samples of each batch item contiguous."""
         kv, last = self.encode_prefix(batch["input_ids"], batch["attention_mask"], batch["pixel_values"],
                                       batch["image_grid_thw"], batch.get("mm_token_type_ids"))
         B = batch["input_ids"].shape[0]
-        x = noise if noise is not None else torch.randn(B, self.horizon, self.action_dim, device=last.device)
+        mask, states = batch["attention_mask"], batch["states"]
+        if n_samples > 1:
+            kv, last = kv.repeat_interleave(n_samples), last.repeat_interleave(n_samples)
+            mask, states = mask.repeat_interleave(n_samples, 0), states.repeat_interleave(n_samples, 0)
+        N = B * n_samples
+        x = noise if noise is not None else torch.randn(N, self.horizon, self.action_dim, device=last.device)
         dt = -1.0 / steps
         for k in range(steps):
-            t = torch.full((B,), 1.0 + k * dt, device=x.device)
-            x = x + dt * self._expert(x, batch["states"], t, kv, batch["attention_mask"], last).float()
-        return x
+            t = torch.full((N,), 1.0 + k * dt, device=x.device)
+            x = x + dt * self._expert(x, states, t, kv, mask, last).float()
+        return x.view(B, n_samples, self.horizon, self.action_dim) if n_samples > 1 else x
