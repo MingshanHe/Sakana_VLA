@@ -158,6 +158,7 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
     end_frame = np.full(n, np.nan)
     n_dec, n_changed, n_stop_rej, n_stop_forced = (np.zeros(n, int) for _ in range(4))
     n_ver_dec, n_ver_top1, ver_regret = np.zeros(n, int), np.zeros(n, int), np.zeros(n)  # learned verifier vs oracle
+    n_prim_pick = np.zeros(n, int)  # decisions where a primitive candidate (index >= candidates) was executed
     prev_wp = None
     need_wm = select.startswith("wm") or dump_wm is not None   # send RGB-D + executed increments to the server / dump them
     last_exec = np.zeros((n_pad, 25), np.float32)              # increments executed since the previous decision
@@ -250,6 +251,7 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
                         n_stop_forced[i] += int(cands[0, 0, 4] <= 0.5 and cands[k, 0, 4] > 0.5)
                     n_dec[i] += 1
                     n_changed[i] += int(k != 0)
+                    n_prim_pick[i] += int(primitives and k >= candidates)
                     picked[a_i] = cands[k]
                 pred = picked
         H = pred.shape[1]
@@ -354,7 +356,7 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
                     "geodesic": geo, "target_pixels_end": int(pix[0]), "frames": float(end_frame[i]),
                     "decisions": int(n_dec[i]), "sel_changed": int(n_changed[i]), "stop_rejected": int(n_stop_rej[i]),
                     "stop_forced": int(n_stop_forced[i]), "ver_decisions": int(n_ver_dec[i]), "ver_top1": int(n_ver_top1[i]),
-                    "ver_regret": float(ver_regret[i])})
+                    "ver_regret": float(ver_regret[i]), "primitive_picks": int(n_prim_pick[i])})
         if video_dir and frames_video[i]:
             import imageio.v2 as imageio
             imageio.mimsave(Path(video_dir) / f"{e['id'].replace('/', '_')}_{status[i]}.mp4", frames_video[i], fps=10 / exec_frames,
@@ -481,6 +483,7 @@ def main():
     summ["stopped_rate"] = float(np.mean([r["status"] == "stopped" for r in results]))
     n_dec = sum(r["decisions"] for r in results)
     summ["sel_changed_rate"] = float(sum(r["sel_changed"] for r in results) / max(1, n_dec))
+    summ["primitive_pick_rate"] = float(sum(r.get("primitive_picks", 0) for r in results) / max(1, n_dec))
     summ["stop_rejected"] = int(sum(r["stop_rejected"] for r in results))
     summ["stop_forced"] = int(sum(r["stop_forced"] for r in results))
     n_ver = sum(r["ver_decisions"] for r in results)
