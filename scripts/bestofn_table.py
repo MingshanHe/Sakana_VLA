@@ -18,9 +18,10 @@ for d in sorted(run.glob(f"closed_loop_val_unseen_{prefix}*")):
     rows.append((d.name.replace("closed_loop_val_unseen_", ""), a.get("candidates", 1), a.get("select", "first"),
                  a.get("tentative_stop", "hover"), s["success"], s["near_target_ever"], s["near_target_end"], s["collision_rate"],
                  s.get("stopped_rate", float("nan")), s["timeout_rate"], s["ne"], s.get("sel_changed_rate", 0.0),
-                 s.get("stop_rejected", 0), s.get("stop_forced", 0), s["n"]))
-print("| run | N | select | tentative stop | SR | near target ever | near target end | collision | stopped | timeout | NE (m) | changed | stop rej / forced | n |")
-print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+                 s.get("stop_rejected", 0), s.get("stop_forced", 0), s["n"], s.get("verifier_top1_acc"), s.get("verifier_regret")))
+print("| run | N | select | tentative stop | SR | near target ever | near target end | collision | stopped | timeout | NE (m) | changed | stop rej / forced | n | verifier top-1 / regret |")
+print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 for t in rows:
+    ver = f"{t[15]:.2f} / {t[16]:.2f}" if t[15] is not None else "-"
     print(f"| {t[0]} | {t[1]} | {t[2]} | {t[3]} | **{t[4]:.2f}** | {t[5]:.2f} | {t[6]:.2f} | {t[7]:.2f} | {t[8]:.2f} | {t[9]:.2f} | "
-          f"{t[10]:.2f} | {t[11]:.2f} | {t[12]} / {t[13]} | {t[14]} |")
+          f"{t[10]:.2f} | {t[11]:.2f} | {t[12]} / {t[13]} | {t[14]} | {ver} |")

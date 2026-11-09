@@ -22,6 +22,9 @@ from .model import ChunkWorldModel
 from .replay import Replay, file_meta, load_files, to_torch
 
 
+AUTOCAST = lambda: torch.autocast("cuda", torch.bfloat16)  # noqa: E731  (set from --device in main)
+
+
 def prefetch(replay, b, t, n=6):
     q = queue.Queue(n)
 
@@ -41,7 +44,7 @@ def evaluate(wm, twohot, val, device, batches=16, b=16, ctx=4, horizon=4):
     agg, ol = {}, {k: [] for k in ("prog_mae", "prog_sign_acc", "clr_mae", "vis_acc", "goal_acc", "col_pos", "col_neg")}
     for _ in range(batches):
         batch = to_torch(val.sample(b, ctx + horizon), device)
-        with torch.autocast("cuda", torch.bfloat16):
+        with AUTOCAST():
             _, m, _, _ = wm.loss(batch, twohot)
             for k, v in m.items():
                 agg.setdefault(k, []).append(float(v))
@@ -91,20 +94,30 @@ def main():
     ap.add_argument("--val-houses", nargs="*", default=[])
     ap.add_argument("--compile", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--device", default="cuda", help="cuda, or cpu for a smoke test")
+    ap.add_argument("--max-files", type=int, default=0, help="smoke test: use only the first N replay files")
     args = ap.parse_args()
     torch.manual_seed(args.seed)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     files = load_files(args.data)
+    if args.max_files:
+        files = files[:args.max_files // 2] + files[-args.max_files // 2:]
     val_f, train_f = [], []
     for f in files:
         meta = file_meta(f)
         (val_f if meta.get("subset") == args.val_subset or meta.get("house") in args.val_houses else train_f).append(f)
+    if not val_f:  # no unseen-house episodes in the data: hold out every 20th training episode
+        val_f = train_f[::20]
+        train_f = [f for f in train_f if f not in set(val_f)]
+        print("no val-subset episodes found; holding out every 20th training episode", flush=True)
     t0 = time.time()
     train, val = Replay(train_f, args.seed), Replay(val_f, args.seed + 1)
     print(f"replay: train {len(train_f)} eps / {train.n} steps, val {len(val_f)} eps / {val.n} steps, loaded {time.time() - t0:.0f}s",
           flush=True)
-    device = "cuda"
+    device = args.device
+    global AUTOCAST
+    AUTOCAST = lambda: torch.autocast(device, torch.bfloat16, enabled=device == "cuda")  # noqa: E731
     wm = ChunkWorldModel(size=args.size).to(device)
     if args.compile:
         wm.rssm.compile()
@@ -121,7 +134,7 @@ def main():
         for g in opt.param_groups:
             g["lr"] = args.lr * min(1.0, step / args.warmup)
         batch = to_torch(q.get(), device)
-        with torch.autocast("cuda", torch.bfloat16):
+        with AUTOCAST():
             loss, m, _, _ = wm.loss(batch, twohot)
         opt.zero_grad(set_to_none=True)
         loss.backward()

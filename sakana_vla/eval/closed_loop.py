@@ -117,7 +117,7 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
     maps = build_maps(meta["glb"])
     g, clr = maps["grid"], maps["clearance"]
     fields = None
-    if select.startswith("oracle") or dump_wm is not None:  # shortest-path field per goal (oracle scoring, dump labels)
+    if select.startswith(("oracle", "wm")) or dump_wm is not None:  # shortest-path field per goal (oracle scoring, dump labels)
         mask = flight_mask(maps)
         fields = []
         for e in eps:
@@ -157,6 +157,7 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
     last_pos = pos0[:n].astype(np.float64).copy()
     end_frame = np.full(n, np.nan)
     n_dec, n_changed, n_stop_rej, n_stop_forced = (np.zeros(n, int) for _ in range(4))
+    n_ver_dec, n_ver_top1, ver_regret = np.zeros(n, int), np.zeros(n, int), np.zeros(n)  # learned verifier vs oracle
     prev_wp = None
     need_wm = select.startswith("wm") or dump_wm is not None   # send RGB-D + executed increments to the server / dump them
     last_exec = np.zeros((n_pad, 25), np.float32)              # increments executed since the previous decision
@@ -223,13 +224,18 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
                     if select == "random":
                         k = int(rng_sel.integers(len(cands)))
                     elif select.startswith("oracle") or select.startswith("wm"):
-                        if select.startswith("oracle"):
-                            _, pix_now = target_bbox(seg[i:i + 1], eps[i]["target"]["segmentation_class"])
-                            at_goal = bool(np.linalg.norm(P[i] - goal[i]) <= SUCCESS_DIST and pix_now[0] >= MIN_PIXELS)
-                            base_i = cur_ref[i] if anchor == "reference" else np.r_[P[i], yaw[i]]
-                            scores = score_candidates(cands, P[i], yaw[i], base_i, goal[i], fields[i], g, clr, at_goal)
-                        else:
+                        _, pix_now = target_bbox(seg[i:i + 1], eps[i]["target"]["segmentation_class"])
+                        at_goal = bool(np.linalg.norm(P[i] - goal[i]) <= SUCCESS_DIST and pix_now[0] >= MIN_PIXELS)
+                        base_i = cur_ref[i] if anchor == "reference" else np.r_[P[i], yaw[i]]
+                        o_scores = score_candidates(cands, P[i], yaw[i], base_i, goal[i], fields[i], g, clr, at_goal)
+                        if select.startswith("wm"):  # learned verifier picks; the oracle only grades its pick
                             scores = np.asarray(wm_scores[a_i], np.float64)
+                            k_or, k_wm = int(np.argmax(o_scores)), int(np.argmax(scores))
+                            n_ver_dec[i] += 1
+                            n_ver_top1[i] += int(o_scores[k_wm] >= o_scores[k_or] - 1e-6)
+                            ver_regret[i] += o_scores[k_or] - o_scores[k_wm]
+                        else:
+                            scores = o_scores
                         moving = np.flatnonzero(cands[:, 0, 4] <= 0.5)
                         if select.endswith("_motion"):  # the policy's own stop decision (candidate 0), scored motion
                             k = 0 if (cands[0, 0, 4] > 0.5 or len(moving) == 0) else int(moving[np.argmax(scores[moving])])
@@ -342,7 +348,8 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
                     "spl": float(success) * geo / max(path_len[i], geo), "path_len": float(path_len[i]),
                     "geodesic": geo, "target_pixels_end": int(pix[0]), "frames": float(end_frame[i]),
                     "decisions": int(n_dec[i]), "sel_changed": int(n_changed[i]), "stop_rejected": int(n_stop_rej[i]),
-                    "stop_forced": int(n_stop_forced[i])})
+                    "stop_forced": int(n_stop_forced[i]), "ver_decisions": int(n_ver_dec[i]), "ver_top1": int(n_ver_top1[i]),
+                    "ver_regret": float(ver_regret[i])})
         if video_dir and frames_video[i]:
             import imageio.v2 as imageio
             imageio.mimsave(Path(video_dir) / f"{e['id'].replace('/', '_')}_{status[i]}.mp4", frames_video[i], fps=10 / exec_frames,
@@ -468,6 +475,10 @@ def main():
     summ["sel_changed_rate"] = float(sum(r["sel_changed"] for r in results) / max(1, n_dec))
     summ["stop_rejected"] = int(sum(r["stop_rejected"] for r in results))
     summ["stop_forced"] = int(sum(r["stop_forced"] for r in results))
+    n_ver = sum(r["ver_decisions"] for r in results)
+    if n_ver:
+        summ["verifier_top1_acc"] = float(sum(r["ver_top1"] for r in results) / n_ver)
+        summ["verifier_regret"] = float(sum(r["ver_regret"] for r in results) / n_ver)
     summ["n"] = len(results)
     (out_dir / "results.json").write_text(json.dumps({"summary": summ, "args": vars(args), "episodes": results}, indent=1))
     print("SUMMARY " + json.dumps(summ), flush=True)
