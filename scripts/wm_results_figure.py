@@ -28,7 +28,7 @@ def main():
     ap.add_argument("--run", default="runs/v1_stageA")
     ap.add_argument("--out", default="docs/assets/fig11_wm_verifier.png")
     args = ap.parse_args()
-    fig, axs = plt.subplots(1, 2, figsize=(14, 4.4), gridspec_kw={"width_ratios": [1, 1.5]})
+    fig, axs = plt.subplots(1, 2, figsize=(14, 5.2), gridspec_kw={"width_ratios": [1, 1.5]})
 
     # --- left: oracle scaling
     ax = axs[0]
@@ -53,7 +53,7 @@ def main():
     ax.set_yticklabels(["0", "25%", "50%", "75%", "100%"])
     ax.grid(axis="y", color=GRID)
     ax.set_title("Upper bound: oracle verifier (32 unseen episodes)", loc="left", fontsize=10.5)
-    ax.legend(fontsize=8, loc="center left")
+    ax.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2)
 
     # --- right: learned verifiers
     ax = axs[1]
@@ -61,7 +61,8 @@ def main():
             ("oracle, N=8", "bon_n8_oracle", BLUE), ("oracle, N=8+4 prim.", "bon_n8p_oracle", BLUE),
             ("WM expert-only, N=8", "bon_n8_wmE", VIOLET), ("WM v1, N=8 (wm)", "bon_n8_wm1", ORANGE),
             ("WM v1, N=8 (wm_motion)", "bon_n8_wm1motion", ORANGE), ("WM v1, N=8+4 prim. (wm)", "bon_n8p_wm1", ORANGE),
-            ("WM v1 shield, N=8", "bon_n8_wm1shield", ORANGE), ("WM v2, N=8 (wm)", "bon_n8_wm2", AQUA),
+            ("WM v1 shield, N=8", "bon_n8_wm1shield", ORANGE), ("WM v1, N=16 (wm)", "bon_n16_wm1", ORANGE),
+            ("WM v1, N=16 (wm_motion)", "bon_n16_wm1motion", ORANGE), ("WM v2, N=8 (wm)", "bon_n8_wm2", AQUA),
             ("WM v2 shield, N=8", "bon_n8_wm2shield", AQUA), ("WM v2 shield loose, N=8", "bon_n8_wm2shieldL", AQUA),
             ("WM v2 shield loose, +prim.", "bon_n8p_wm2shieldL", AQUA)]
     rows = [(l, load(args.run, t), c) for l, t, c in rows]
