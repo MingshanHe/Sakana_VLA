@@ -28,7 +28,7 @@ def main():
     ap.add_argument("--run", default="runs/v1_stageA")
     ap.add_argument("--out", default="docs/assets/fig11_wm_verifier.png")
     args = ap.parse_args()
-    fig, axs = plt.subplots(1, 2, figsize=(14, 5.2), gridspec_kw={"width_ratios": [1, 1.5]})
+    fig, axs = plt.subplots(1, 2, figsize=(14, 5.6), gridspec_kw={"width_ratios": [1, 1.5]})
 
     # --- left: oracle scaling
     ax = axs[0]
@@ -57,9 +57,11 @@ def main():
 
     # --- right: learned verifiers
     ax = axs[1]
-    rows = [("policy alone (N=1)", "bon_n1_first", MUTED), ("random pick, N=8", "bon_n8_random", MUTED),
+    rows = [("policy alone (N=1)", "bon_n1_first", MUTED), ("policy alone (N=1), repeat", "bon_n1_first_rep", MUTED),
+            ("random pick, N=8", "bon_n8_random", MUTED),
             ("oracle, N=8", "bon_n8_oracle", BLUE), ("oracle, N=8+4 prim.", "bon_n8p_oracle", BLUE),
             ("WM expert-only, N=8", "bon_n8_wmE", VIOLET), ("WM v1, N=8 (wm)", "bon_n8_wm1", ORANGE),
+            ("WM v1, N=8 (wm), repeat", "bon_n8_wm1_rep", ORANGE),
             ("WM v1, N=8 (wm_motion)", "bon_n8_wm1motion", ORANGE), ("WM v1, N=8+4 prim. (wm)", "bon_n8p_wm1", ORANGE),
             ("WM v1 shield, N=8", "bon_n8_wm1shield", ORANGE), ("WM v1, N=16 (wm)", "bon_n16_wm1", ORANGE),
             ("WM v1, N=16 (wm_motion)", "bon_n16_wm1motion", ORANGE), ("WM v2, N=8 (wm)", "bon_n8_wm2", AQUA),
