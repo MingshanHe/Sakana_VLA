@@ -17,7 +17,7 @@ case "$1" in
   sweep)
     bash scripts/bestofn_sweep.sh "$RUN" 32 40 ;;
   dump)
-    LIMIT=${2:-256}; TAG=${3:-v0}
+    LIMIT=${2:-128}; TAG=${3:-v0}
     $CL --split train --limit $LIMIT --max-seconds 30 --tag dump_${TAG}_a --dump-wm data/wm/onpolicy_$TAG 2>&1 | filt
     $CL --split train --limit $LIMIT --max-seconds 30 --tag dump_${TAG}_b --candidates 4 --select random \
         --dump-wm data/wm/onpolicy_$TAG --resample-noise 2>&1 | filt
