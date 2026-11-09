@@ -71,7 +71,7 @@ Per-frame columns:
 
 ## VLA (`sakana_vla/`)
 
-v0 follows OpenFlyV2 without MAM and MSP: a Qwen3.5-0.8B prefix plus a 233M flow-matching action Expert in pi0 style. Results are in [docs/v0_results.md](docs/v0_results.md) (bilingual).
+v0 follows OpenFlyV2 without MAM and MSP: a Qwen3.5-0.8B prefix plus a 233M flow-matching action Expert in pi0 style. The full stage report, with figures and videos, is [docs/report.md](docs/report.md) (中文). A short bilingual summary is [docs/v0_results.md](docs/v0_results.md).
 
 | file | role |
 |---|---|

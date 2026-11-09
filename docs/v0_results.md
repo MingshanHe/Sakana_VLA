@@ -1,5 +1,7 @@
 # SakanaVLA v0: first feasibility run / 第一版可行性实验 (2026-11-09)
 
+> The full stage report, with figures and videos, is [report.md](report.md). 完整的阶段报告（含图和视频）见 [report.md](report.md)。
+
 **TL;DR (EN).** The OpenFlyV2 recipe minus MAM and MSP is Qwen3.5-0.8B plus a 233M flow-matching action Expert. Stage A trains the Expert with the VLM frozen. With 45 ProcTHOR houses it learns accurate short-horizon motion: on unseen houses ADE@1.2s is 3.2 cm, against 6.0 cm for constant velocity. The closed-loop executor is validated (expert replay reaches SR 100%). End-to-end closed-loop navigation still **fails** (SR 0 on unseen houses). Low-level flight through doors is plausible. Goal selection fails: wrong room or wrong object, stops at the start, and the policy collides once it drifts. The likely causes are a single frame with no history, a frozen VLM (weak grounding), and template instructions. The v1 changes below address these.
 
 **结论（中文）。** v0 采用 OpenFlyV2 的方案，去掉了 MAM 和 MSP：Qwen3.5-0.8B 加一个 233M 参数的 flow-matching 动作专家，VLM 冻结，只训练 expert。在 45 栋 ProcTHOR 房子上训练后，短时动作预测已经很准：未见房子上 1.2 s 内的 ADE 为 3.2 cm，匀速外推基线是 6.0 cm。闭环执行器也验证过了，用专家轨迹回放可以达到 SR 100%。但端到端闭环导航**仍然失败**，未见房子上 SR 为 0。底层飞行（穿门、进房间）基本合理，失败出在目标选择上：去错房间、找错物体、起点就 stop，偏离路线后发生碰撞。主要原因有三点：只用单帧、没有历史信息；VLM 冻结导致语言与视觉的 grounding 不足；指令只是模板。下一版的改进见文末。
