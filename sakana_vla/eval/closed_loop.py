@@ -26,6 +26,7 @@ from sakana_vla.wm.labels import GOAL_DIST, VIS_PIXELS, clearance_at, rgbd64
 AUTHKEY = b"sakana-vla"
 SUCCESS_DIST, MIN_PIXELS = 1.0, 150
 ORACLE_PENALTY = 10.0  # privileged candidate scoring: collision / wrong-stop penalty, correct-stop bonus
+SHIELD_CONT, SHIELD_CLR = 0.7, 0.2  # wm_shield: a candidate is unsafe if P(no collision) < 0.7 or predicted min clearance < 0.2 m
 
 
 def chunk_waypoints(chunk, base, yaw):
@@ -173,7 +174,7 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
         act = np.flatnonzero(~done)
         yaw = yaw_from_quat(Q)
         tentative = np.zeros(n_pad, bool)
-        wm_obs = wm_scores = wm_goal = None
+        wm_obs = wm_scores = wm_goal = wm_parts = None
         if need_wm:
             wm_obs = np.stack([rgbd64(rgb[i], depth[i]) for i in act]) if len(act) else np.zeros((0, 64, 64, 4), np.uint8)
 
@@ -212,7 +213,7 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
             conn.send(req)
             resp = conn.recv()
             if isinstance(resp, dict):
-                pred, wm_scores, wm_goal = resp["chunks"], resp.get("wm_scores"), resp.get("wm_goal")
+                pred, wm_scores, wm_goal, wm_parts = resp["chunks"], resp.get("wm_scores"), resp.get("wm_goal"), resp.get("wm_parts")
                 if select.startswith("wm") and pred.ndim == 4 and wm_scores is None:
                     raise RuntimeError("--select wm needs the policy server started with --wm <checkpoint> (use --server-args)")
             else:
@@ -240,6 +241,13 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
                         moving = np.flatnonzero(cands[:, 0, 4] <= 0.5)
                         if select.endswith("_motion"):  # the policy's own stop decision (candidate 0), scored motion
                             k = 0 if (cands[0, 0, 4] > 0.5 or len(moving) == 0) else int(moving[np.argmax(scores[moving])])
+                        elif select == "wm_shield":  # keep the policy's choice unless the model predicts danger
+                            unsafe = (wm_parts["cont"][a_i] < SHIELD_CONT) | (wm_parts["clr_min"][a_i] < SHIELD_CLR)
+                            if cands[0, 0, 4] > 0.5 or not unsafe[0]:
+                                k = 0
+                            else:
+                                safe = np.flatnonzero(~unsafe & (cands[:, 0, 4] <= 0.5))
+                                k = int(safe[np.argmax(scores[safe])]) if len(safe) else int(np.argmax(scores))
                         elif select == "wm":  # the world model can veto the policy's stop, never force one
                             if cands[0, 0, 4] > 0.5 and (wm_goal is None or wm_goal[a_i] > 0.5 or len(moving) == 0):
                                 k = 0
@@ -422,7 +430,7 @@ def main():
     ap.add_argument("--ids", nargs="*", default=None, help="only these episode ids (subset/episode_index)")
     ap.add_argument("--record", action="store_true", help="save 10 Hz onboard frames + trajectories for videos")
     ap.add_argument("--candidates", type=int, default=1, help="chunks sampled per decision (different fixed noise each)")
-    ap.add_argument("--select", default="first", choices=["first", "random", "oracle", "oracle_motion", "wm", "wm_motion", "wm_force"],
+    ap.add_argument("--select", default="first", choices=["first", "random", "oracle", "oracle_motion", "wm", "wm_motion", "wm_force", "wm_shield"],
                     help="pick among candidates; oracle* use privileged sim info (upper bound), wm* the learned world model "
                          "(wm: motion by score, stop only if the policy proposes it and the model agrees; wm_force: pure argmax)")
     ap.add_argument("--dump-wm", default=None, help="directory: save every episode as world-model replay (RGB-D, actions, labels)")
