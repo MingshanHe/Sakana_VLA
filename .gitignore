@@ -1,9 +1,9 @@
-data/
+/data/
 __pycache__/
 *.pyc
 *.mp4
 *.npz
 *.parquet
-logs/
-runs/
+/logs/
+/runs/
 !docs/assets/videos/*.mp4
