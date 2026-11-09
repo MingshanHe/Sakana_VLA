@@ -41,7 +41,7 @@ def evaluate(wm, twohot, val, device, batches=16, b=16, ctx=4, horizon=4):
     wm.eval()
     st = val.rng.bit_generator.state
     val.rng = np.random.default_rng(123)
-    agg, ol = {}, {k: [] for k in ("prog_mae", "prog_sign_acc", "clr_mae", "vis_acc", "goal_acc", "col_pos", "col_neg")}
+    agg, ol = {}, {k: [] for k in ("prog_mae", "prog_pred", "prog_true", "clr_mae", "vis_acc", "goal_acc", "col_pos", "col_neg")}
     for _ in range(batches):
         batch = to_torch(val.sample(b, ctx + horizon), device)
         with AUTOCAST():
@@ -59,7 +59,8 @@ def evaluate(wm, twohot, val, device, batches=16, b=16, ctx=4, horizon=4):
                 alive &= ~batch["is_first"][:, ctx + k]
                 r = batch["reward"][:, ctx + k]
                 ol["prog_mae"].append((o["progress"] - r).abs()[alive].cpu().numpy())
-                ol["prog_sign_acc"].append(((o["progress"] > 0.02) == (r > 0.02))[alive].float().cpu().numpy())
+                ol["prog_pred"].append(o["progress"][alive].float().cpu().numpy())
+                ol["prog_true"].append(r[alive].float().cpu().numpy())
                 ol["clr_mae"].append((o["clearance"] - batch["clearance"][:, ctx + k].clamp(0, 1)).abs()[alive].cpu().numpy())
                 ol["vis_acc"].append(((o["vis"] > 0.5) == batch["target_vis"][:, ctx + k])[alive].float().cpu().numpy())
                 ol["goal_acc"].append(((o["at_goal"] > 0.5) == batch["at_goal"][:, ctx + k])[alive].float().cpu().numpy())
@@ -69,8 +70,10 @@ def evaluate(wm, twohot, val, device, batches=16, b=16, ctx=4, horizon=4):
                 alive &= ~term
     val.rng.bit_generator.state = st
     res = {f"val_{k}": float(np.mean(v)) for k, v in agg.items()}
-    for k in ("prog_mae", "prog_sign_acc", "clr_mae", "vis_acc", "goal_acc"):
+    for k in ("prog_mae", "clr_mae", "vis_acc", "goal_acc"):
         res[f"ol_{k}"] = float(np.mean(np.concatenate(ol[k])))
+    pp, pt = np.concatenate(ol["prog_pred"]), np.concatenate(ol["prog_true"])
+    res["ol_prog_corr"] = float(np.corrcoef(pp, pt)[0, 1]) if pp.std() > 1e-6 and pt.std() > 1e-6 else 0.0
     pos, neg = np.concatenate(ol["col_pos"]), np.concatenate(ol["col_neg"])
     if len(pos) and len(neg):
         res["ol_col_auc"] = float((pos[:, None] > neg[None, :]).mean())
