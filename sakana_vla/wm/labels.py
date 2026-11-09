@@ -21,6 +21,15 @@ def scale_actions(a):
     return np.asarray(a, np.float32) * ACTION_SCALE
 
 
+def primitive_chunks(H=12):
+    """Hand-made candidates appended to the policy's samples: hover, rotate left / right in place, slow forward."""
+    p = np.zeros((4, H, 5), np.float32)
+    p[1, :, 3] = 0.08    # rotate left, 0.8 rad/s
+    p[2, :, 3] = -0.08   # rotate right
+    p[3, :, 0] = 0.03    # forward, 0.3 m/s
+    return p
+
+
 def rgbd64(rgb, depth_m):
     """rgb (256,256,3) uint8, depth (256,256) metres (float) or millimetres (uint16) -> (64,64,4) uint8."""
     d = depth_m.astype(np.float32)

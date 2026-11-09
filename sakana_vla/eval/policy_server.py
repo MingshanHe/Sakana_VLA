@@ -16,6 +16,7 @@ from transformers import AutoProcessor
 
 from ..data.dataset import Collator, denormalize_actions
 from ..model.vla import SakanaVLA
+from ..wm.labels import primitive_chunks
 
 AUTHKEY = b"sakana-vla"
 
@@ -83,6 +84,10 @@ def main():
                     with torch.autocast("cuda", dtype=torch.bfloat16):
                         x = model.sample(batch, steps=args.denoise_steps, noise=noise, n_samples=n_samples)
                     out = denormalize_actions(x.float().cpu().numpy(), stats)
+                    if req.get("primitives"):  # append hand-made candidates (scored like the others)
+                        out = out if out.ndim == 4 else out[:, None]
+                        prim = primitive_chunks(out.shape[2])
+                        out = np.concatenate([out, np.broadcast_to(prim, (out.shape[0],) + prim.shape)], 1)
                     if wm_req is None:
                         conn.send(out)
                     else:

@@ -112,7 +112,7 @@ def state_vec(pos, quat, vel, angvel):
 
 def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noise=True, stop_consecutive=2, oracle=None,
               anchor="reference", min_stop_frame=0, record_dir=None, candidates=1, select="first", tentative_stop="hover",
-              dump_wm=None):
+              dump_wm=None, primitives=False):
     meta = json.loads(Path(f"data/scenes/{eps[0]['house']}.json").read_text())
     maps = build_maps(meta["glb"])
     g, clr = maps["grid"], maps["clearance"]
@@ -204,7 +204,7 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
         else:
             req = {"images": rgb[act], "instructions": [eps[i]["instruction"] for i in act],
                    "states": state_vec(P[act], Q[act], V[act], W[act]),
-                   "seeds": [seeds[i] for i in act] if fixed_noise else None, "n_samples": candidates}
+                   "seeds": [seeds[i] for i in act] if fixed_noise else None, "n_samples": candidates, "primitives": primitives}
             if need_wm:
                 req["wm"] = {"ids": [eps[i]["id"] for i in act], "obs": wm_obs, "prev_actions": last_exec[act],
                              "is_first": np.array([frame == 0] * len(act), bool)}
@@ -212,11 +212,11 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
             resp = conn.recv()
             if isinstance(resp, dict):
                 pred, wm_scores = resp["chunks"], resp.get("wm_scores")
-                if select.startswith("wm") and candidates > 1 and wm_scores is None:
+                if select.startswith("wm") and pred.ndim == 4 and wm_scores is None:
                     raise RuntimeError("--select wm needs the policy server started with --wm <checkpoint> (use --server-args)")
             else:
                 pred = resp
-            if candidates > 1:  # (n_act, N, H, 5): pick one chunk per drone
+            if pred.ndim == 4:  # (n_act, N, H, 5): pick one chunk per drone
                 picked = np.zeros((len(act),) + pred.shape[2:], np.float32)
                 for a_i, i in enumerate(act):
                     cands = pred[a_i]
@@ -418,6 +418,7 @@ def main():
     ap.add_argument("--select", default="first", choices=["first", "random", "oracle", "oracle_motion", "wm", "wm_motion"],
                     help="pick among candidates; oracle* use privileged sim info (upper bound), wm* the learned world model")
     ap.add_argument("--dump-wm", default=None, help="directory: save every episode as world-model replay (RGB-D, actions, labels)")
+    ap.add_argument("--primitives", action="store_true", help="add 4 hand-made candidates (hover, rotate L/R, slow forward)")
     ap.add_argument("--tentative-stop", default="hover", choices=["hover", "continue"],
                     help="on the first stop vote: hover in place (v0) or keep flying the previous chunk")
     args = ap.parse_args()
@@ -459,7 +460,8 @@ def main():
                           fixed_noise=not args.resample_noise, stop_consecutive=args.stop_consecutive, oracle=oracle,
                           anchor=args.anchor, min_stop_frame=args.min_stop_frame,
                           record_dir=(out_dir / "record") if args.record else None, candidates=args.candidates,
-                          select=args.select, tentative_stop=args.tentative_stop, dump_wm=args.dump_wm)
+                          select=args.select, tentative_stop=args.tentative_stop, dump_wm=args.dump_wm,
+                          primitives=args.primitives)
             results += r
             sr = np.mean([x["success"] for x in r])
             print(f"{house}: {len(r)} eps, SR {sr:.2f}, status {dict(zip(*np.unique([x['status'] for x in r], return_counts=True)))}",

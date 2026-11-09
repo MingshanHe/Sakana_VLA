@@ -20,7 +20,7 @@ case "$1" in
     LIMIT=${2:-128}; TAG=${3:-v0}
     $CL --split train --limit $LIMIT --max-seconds 30 --tag dump_${TAG}_a --dump-wm data/wm/onpolicy_$TAG 2>&1 | filt
     $CL --split train --limit $LIMIT --max-seconds 30 --tag dump_${TAG}_b --candidates 4 --select random \
-        --dump-wm data/wm/onpolicy_$TAG --resample-noise 2>&1 | filt
+        --dump-wm data/wm/onpolicy_${TAG}_rand --resample-noise 2>&1 | filt
     $CL --split val_unseen --limit 32 --max-seconds 40 --tag dump_${TAG}_u --dump-wm data/wm/onpolicy_${TAG}_unseen 2>&1 | filt
     ls data/wm/onpolicy_$TAG | wc -l ;;
   train)
