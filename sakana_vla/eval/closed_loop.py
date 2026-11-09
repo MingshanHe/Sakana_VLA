@@ -29,6 +29,11 @@ ORACLE_PENALTY = 10.0  # privileged candidate scoring: collision / wrong-stop pe
 SHIELD_CONT, SHIELD_CLR = 0.7, 0.2  # wm_shield: a candidate is unsafe if P(no collision) < 0.7 or predicted min clearance < 0.2 m
 
 
+def SHIELD_SET(cont, clr):
+    global SHIELD_CONT, SHIELD_CLR
+    SHIELD_CONT, SHIELD_CLR = float(cont), float(clr)
+
+
 def chunk_waypoints(chunk, base, yaw):
     """(H, 5) increments in the measured-yaw frame -> (H+1, 3) world points starting at base[:3]."""
     cum = np.cumsum(chunk[:, :3], 0)
@@ -435,10 +440,13 @@ def main():
                          "(wm: motion by score, stop only if the policy proposes it and the model agrees; wm_force: pure argmax)")
     ap.add_argument("--dump-wm", default=None, help="directory: save every episode as world-model replay (RGB-D, actions, labels)")
     ap.add_argument("--primitives", action="store_true", help="add 4 hand-made candidates (hover, rotate L/R, slow forward)")
+    ap.add_argument("--shield-cont", type=float, default=SHIELD_CONT, help="wm_shield: unsafe if P(no collision) < this")
+    ap.add_argument("--shield-clr", type=float, default=SHIELD_CLR, help="wm_shield: unsafe if predicted min clearance < this (m)")
     ap.add_argument("--tentative-stop", default="hover", choices=["hover", "continue"],
                     help="on the first stop vote: hover in place (v0) or keep flying the previous chunk")
     args = ap.parse_args()
     YAW_LEAD_SET(args.yaw_lead)
+    SHIELD_SET(args.shield_cont, args.shield_clr)
     eps = load_episodes(args.run, args.split, 0 if args.ids else args.limit, seed=1)
     if args.ids:
         eps = [e for e in eps if e["id"] in set(args.ids)]
