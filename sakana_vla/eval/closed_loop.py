@@ -213,7 +213,7 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
                                 dec_wp=np.array([d["wp"] for d in r["decisions"]]),
                                 dec_stop=np.array([d["stop0"] for d in r["decisions"]]),
                                 dec_active=np.array([d["active"] for d in r["decisions"]]),
-                                meta=json.dumps({**{k: v for k, v in e.items()}, **res[i]}))
+                                meta=json.dumps({"episode": e, "result": res[i]}))
     del renderer
     return res
 

@@ -56,6 +56,18 @@ The first closed-loop runs re-anchored each chunk at the **measured** pose. RAPT
 The fix: chunks are anchored on the continuous reference trajectory, while increments are still rotated with the measured yaw. This is now the default in `sakana_vla/eval/closed_loop.py`.
 修复方法：chunk 接在连续参考轨迹上，增量仍用实测 yaw 转换到世界系。现在 `sakana_vla/eval/closed_loop.py` 默认就用这种方式。
 
+## Videos / 视频
+
+`python -m sakana_vla.eval.closed_loop ... --ids <ids> --record` followed by `python -m sakana_vla.eval.make_videos` renders one video per episode.
+Panels: model onboard view with the predicted waypoints projected (green), the expert replay, and a top-down map (orange = model, blue = expert, red = target / goal).
+The 6 example episodes are unseen houses 47–56: ids 15, 124, 139, 155, 157, 158. The expert replay succeeds in 6/6 with an end error of 0.04 m. The model succeeds in 0/6; it reaches the target region in 3/6.
+Example: in 139 (target: television) the model first follows the expert's route, then turns to a desk and stops in front of a **laptop**, which it confuses with the TV.
+
+用 `closed_loop --record` 录制，再用 `make_videos` 合成，每条 episode 生成一个视频。
+画面内容：左边是模型的机载视角，绿点是预测航点的投影；中间是专家回放；右边是俯视图，橙色为模型，蓝色为专家，红色为目标和终点。
+6 条示例都来自未见房子 47–56：专家回放 6/6 成功，终点误差 0.04 m；模型 0/6 成功，其中 3/6 曾飞到目标附近。
+例如 139 号（目标是电视）：模型先沿着专家的路线飞，随后拐向书桌，停在一台**笔记本电脑**前，把它当成了电视。
+
 ## Failure analysis / 失败分析
 
 1. **Start-vs-goal ambiguity / 起点与终点混淆。** At t=0 the drone hovers, like at the goal, with a random yaw and the target out of view. Sampled chunks disagree on the turn direction, and some predict `stop` at the start. Single-frame input has no notion of progress.
