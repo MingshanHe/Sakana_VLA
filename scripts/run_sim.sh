@@ -7,7 +7,7 @@
 set -u
 J=$1; TAG=$2; LOG=$3; shift 3
 cd "$(dirname "$0")/.."
-export PATH=$HOME/miniconda3/envs/sakana_hyperdrone/bin:$PATH HYPERLUX_BACKEND=${HYPERLUX_BACKEND:-OPTIX} PYTHONPATH=$PWD
+export UV_USE_IO_URING=0 PATH=$HOME/miniconda3/envs/sakana_hyperdrone/bin:$PATH HYPERLUX_BACKEND=${HYPERLUX_BACKEND:-OPTIX} PYTHONPATH=$PWD
 unset HYPERLUX_CACHE_DIR
 RUN=${RUN:-runs/v1_stageA}
 exec 9>/tmp/${USER}-sim-start.lock

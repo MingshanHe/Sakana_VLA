@@ -1,7 +1,14 @@
-"""Workaround: on fresh cluster nodes hyperlux's JIT configure (cmake under subprocess PIPE) can stall
-indefinitely; streaming the build output instead of capturing it avoids that. Import before hyperlux/hyperdrone."""
+"""Workarounds for hyperlux's JIT (cmake) hanging on the cluster. Import before hyperlux/hyperdrone.
+
+1. `cmake --build` (conda CMake 4.4, libuv with io_uring) can hang forever after "[100%] Built target" with a defunct
+   child: libuv's io_uring path. UV_USE_IO_URING=0 disables it (set here for this process and all children).
+2. The configure step under subprocess PIPE can stall; streaming the build output instead of capturing it avoids that.
+"""
+import os
 import subprocess
 import sys
+
+os.environ.setdefault("UV_USE_IO_URING", "0")
 
 import hyperlux._jit._build as _build
 

@@ -4,7 +4,7 @@
 # Same 32-episode unseen set as v0 (limit 32, seed 1). Each run writes runs/<run>/closed_loop_val_unseen_<tag>/results.json.
 set -e
 cd "$(dirname "$0")/.."
-export PATH=$HOME/miniconda3/envs/sakana_hyperdrone/bin:$PATH HYPERLUX_BACKEND=${HYPERLUX_BACKEND:-OPTIX} PYTHONPATH=$PWD
+export UV_USE_IO_URING=0 PATH=$HOME/miniconda3/envs/sakana_hyperdrone/bin:$PATH HYPERLUX_BACKEND=${HYPERLUX_BACKEND:-OPTIX} PYTHONPATH=$PWD
 RUN=${1:-runs/v1_stageA}; LIMIT=${2:-32}; SECS=${3:-40}
 COMMON="--run $RUN --split val_unseen --limit $LIMIT --max-seconds $SECS --batch 16 --videos 0"
 run() { tag=$1; shift; echo "=== $tag  $*"; python -u -m sakana_vla.eval.closed_loop $COMMON --tag "$tag" "$@" 2>&1 | grep -E "^ProcTHOR|SUMMARY|Traceback|Error" ; }
