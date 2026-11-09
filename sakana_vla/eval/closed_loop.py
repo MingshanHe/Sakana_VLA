@@ -21,6 +21,7 @@ from datagen.expert_rollout import COLLISION_CLEARANCE, LEAD_STEPS, Z_SAG_COMP, 
 from datagen.geometry import build_maps, flight_mask
 from datagen.planner import GoalField
 from datagen.render import Renderer, target_bbox
+from sakana_vla.wm.labels import GOAL_DIST, VIS_PIXELS, clearance_at, rgbd64
 
 AUTHKEY = b"sakana-vla"
 SUCCESS_DIST, MIN_PIXELS = 1.0, 150
@@ -110,12 +111,13 @@ def state_vec(pos, quat, vel, angvel):
 
 
 def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noise=True, stop_consecutive=2, oracle=None,
-              anchor="reference", min_stop_frame=0, record_dir=None, candidates=1, select="first", tentative_stop="hover"):
+              anchor="reference", min_stop_frame=0, record_dir=None, candidates=1, select="first", tentative_stop="hover",
+              dump_wm=None):
     meta = json.loads(Path(f"data/scenes/{eps[0]['house']}.json").read_text())
     maps = build_maps(meta["glb"])
     g, clr = maps["grid"], maps["clearance"]
     fields = None
-    if select.startswith("oracle"):  # one shortest-path field per goal for privileged progress scoring
+    if select.startswith("oracle") or dump_wm is not None:  # shortest-path field per goal (oracle scoring, dump labels)
         mask = flight_mask(maps)
         fields = []
         for e in eps:
@@ -156,13 +158,41 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
     end_frame = np.full(n, np.nan)
     n_dec, n_changed, n_stop_rej, n_stop_forced = (np.zeros(n, int) for _ in range(4))
     prev_wp = None
+    need_wm = select.startswith("wm") or dump_wm is not None   # send RGB-D + executed increments to the server / dump them
+    last_exec = np.zeros((n_pad, 25), np.float32)              # increments executed since the previous decision
+    clr_step_min = np.full(n, np.inf)                           # min clearance since the previous decision
+    dump = [[] for _ in range(n)] if dump_wm is not None else None
+    pending_term = []
+    wrap = lambda a: (a + np.pi) % (2 * np.pi) - np.pi
     while not done.all() and frame < max_frames:
         P, Q = sim.state["position"], sim.state["orientation"]
         V, W = sim.state["linear_velocity"], sim.state["angular_velocity"]
-        rgb, _, seg = renderer.render(P, Q)
+        rgb, depth, seg = renderer.render(P, Q)
         act = np.flatnonzero(~done)
         yaw = yaw_from_quat(Q)
         tentative = np.zeros(n_pad, bool)
+        wm_obs = wm_scores = None
+        if need_wm:
+            wm_obs = np.stack([rgbd64(rgb[i], depth[i]) for i in act]) if len(act) else np.zeros((0, 64, 64, 4), np.uint8)
+
+        def make_row(i, terminal):
+            _, pix_i = target_bbox(seg[i:i + 1], eps[i]["target"]["segmentation_class"])
+            vis = bool(pix_i[0] >= VIS_PIXELS)
+            geo = fields[i].geodesic(P[i]) if fields[i] is not None else float(np.linalg.norm(P[i] - goal[i]))
+            c0 = clr_step_min[i] if np.isfinite(clr_step_min[i]) else float(clearance_at(maps, P[i])[0])
+            clr_step_min[i] = np.inf
+            return {"image": rgbd64(rgb[i], depth[i]), "vector": state_vec(P[i:i + 1], Q[i:i + 1], V[i:i + 1], W[i:i + 1])[0],
+                    "action": np.zeros(25, np.float32), "geodesic": geo, "clearance": float(c0), "target_vis": vis,
+                    "at_goal": bool(np.linalg.norm(P[i] - goal[i]) <= GOAL_DIST and vis), "is_terminal": terminal}
+
+        row_ref = {}
+        if dump is not None:
+            for i in pending_term:
+                dump[i].append(make_row(i, True))
+            pending_term = []
+            for i in act:
+                row_ref[i] = make_row(i, False)
+                dump[i].append(row_ref[i])
         if video_dir:
             for i in act:
                 frames_video[i].append(rgb[i])
@@ -171,10 +201,20 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
             from sakana_vla.data.dataset import chunk_increments
             pred = np.stack([chunk_increments(oracle, eps[i]["offset"] + min(frame, eps[i]["length"] - 1), 12) for i in act])
         else:
-            conn.send({"images": rgb[act], "instructions": [eps[i]["instruction"] for i in act],
-                       "states": state_vec(P[act], Q[act], V[act], W[act]),
-                       "seeds": [seeds[i] for i in act] if fixed_noise else None, "n_samples": candidates})
-            pred = conn.recv()
+            req = {"images": rgb[act], "instructions": [eps[i]["instruction"] for i in act],
+                   "states": state_vec(P[act], Q[act], V[act], W[act]),
+                   "seeds": [seeds[i] for i in act] if fixed_noise else None, "n_samples": candidates}
+            if need_wm:
+                req["wm"] = {"ids": [eps[i]["id"] for i in act], "obs": wm_obs, "prev_actions": last_exec[act],
+                             "is_first": np.array([frame == 0] * len(act), bool)}
+            conn.send(req)
+            resp = conn.recv()
+            if isinstance(resp, dict):
+                pred, wm_scores = resp["chunks"], resp.get("wm_scores")
+                if select.startswith("wm") and candidates > 1 and wm_scores is None:
+                    raise RuntimeError("--select wm needs the policy server started with --wm <checkpoint> (use --server-args)")
+            else:
+                pred = resp
             if candidates > 1:  # (n_act, N, H, 5): pick one chunk per drone
                 picked = np.zeros((len(act),) + pred.shape[2:], np.float32)
                 for a_i, i in enumerate(act):
@@ -182,13 +222,16 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
                     k = 0
                     if select == "random":
                         k = int(rng_sel.integers(len(cands)))
-                    elif select.startswith("oracle"):
-                        _, pix_now = target_bbox(seg[i:i + 1], eps[i]["target"]["segmentation_class"])
-                        at_goal = bool(np.linalg.norm(P[i] - goal[i]) <= SUCCESS_DIST and pix_now[0] >= MIN_PIXELS)
-                        base_i = cur_ref[i] if anchor == "reference" else np.r_[P[i], yaw[i]]
-                        scores = score_candidates(cands, P[i], yaw[i], base_i, goal[i], fields[i], g, clr, at_goal)
+                    elif select.startswith("oracle") or select.startswith("wm"):
+                        if select.startswith("oracle"):
+                            _, pix_now = target_bbox(seg[i:i + 1], eps[i]["target"]["segmentation_class"])
+                            at_goal = bool(np.linalg.norm(P[i] - goal[i]) <= SUCCESS_DIST and pix_now[0] >= MIN_PIXELS)
+                            base_i = cur_ref[i] if anchor == "reference" else np.r_[P[i], yaw[i]]
+                            scores = score_candidates(cands, P[i], yaw[i], base_i, goal[i], fields[i], g, clr, at_goal)
+                        else:
+                            scores = np.asarray(wm_scores[a_i], np.float64)
                         moving = np.flatnonzero(cands[:, 0, 4] <= 0.5)
-                        if select == "oracle_motion":  # the policy's own stop decision (candidate 0), oracle motion
+                        if select.endswith("_motion"):  # the policy's own stop decision (candidate 0), scored motion
                             k = 0 if (cands[0, 0, 4] > 0.5 or len(moving) == 0) else int(moving[np.argmax(scores[moving])])
                         else:
                             k = int(np.argmax(scores))
@@ -226,6 +269,14 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
                 tail = prev_wp[i, exec_frames:]
                 wp[i] = np.concatenate([tail, np.repeat(tail[-1:], H + 1 - len(tail), 0)], 0)
         prev_wp = wp.copy()
+        if need_wm:  # commanded increments for the next 0.5 s, in the measured-yaw frame of this decision
+            dxyz = wp[:, 1:exec_frames + 1, :3] - wp[:, :exec_frames, :3]
+            cy, sy = np.cos(yaw)[:, None], np.sin(yaw)[:, None]
+            inc = np.stack([cy * dxyz[..., 0] + sy * dxyz[..., 1], -sy * dxyz[..., 0] + cy * dxyz[..., 1], dxyz[..., 2],
+                            wrap(wp[:, 1:exec_frames + 1, 3] - wp[:, :exec_frames, 3]), chunks[:, :exec_frames, 4]], -1)
+            last_exec = inc.reshape(n_pad, -1).astype(np.float32)
+            for i, row in row_ref.items():
+                row["action"] = last_exec[i].copy()
         tq = np.arange(H * 10 + 1) / 10.0
         ref = np.stack([np.stack([np.interp(tq, np.arange(H + 1), wp[i, :, d]) for d in range(4)], -1)
                         for i in range(n_pad)])                                 # (n_pad, 10H+1, 4)
@@ -241,6 +292,8 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
             sp[:, 3] = (sp[:, 3] + np.pi) % (2 * np.pi) - np.pi
             sim.step(sp.astype(np.float32))
             Pj = sim.state["position"][:n].astype(np.float64)
+            if dump is not None:
+                clr_step_min = np.minimum(clr_step_min, clearance_at(maps, Pj))
             if record_dir is not None and j % 10 == 9:
                 Pr, Qr = sim.state["position"], sim.state["orientation"]
                 rgb_r, _, _ = renderer.render(Pr, Qr)
@@ -254,6 +307,8 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
                     done[i], status[i] = True, "collision"
                     hold[i] = [*Pj[i], yaw[i]]
                     end_frame[i] = frame + (j + 1) / 10
+                    if dump is not None:
+                        pending_term.append(i)
             path_len += np.where(status_mask(status, n), np.linalg.norm(Pj - last_pos, axis=1), 0.0)
             last_pos = Pj
             min_goal = np.minimum(min_goal, np.linalg.norm(Pj - goal, axis=1))
@@ -269,7 +324,11 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
             status[i] = "timeout"
             end_frame[i] = frame
     P, Q = sim.state["position"], sim.state["orientation"]
-    _, _, seg = renderer.render(P, Q)
+    V, W = sim.state["linear_velocity"], sim.state["angular_velocity"]
+    rgb, depth, seg = renderer.render(P, Q)
+    if dump is not None:
+        for i in pending_term:
+            dump[i].append(make_row(i, True))
     res = []
     for i, e in enumerate(eps):
         _, pix = target_bbox(seg[i:i + 1], e["target"]["segmentation_class"])
@@ -299,6 +358,27 @@ def run_house(eps, sim, conn, exec_frames, max_frames, video_dir=None, fixed_noi
                                 dec_stop=np.array([d["stop0"] for d in r["decisions"]]),
                                 dec_active=np.array([d["active"] for d in r["decisions"]]),
                                 meta=json.dumps({"episode": e, "result": res[i]}))
+    if dump is not None:
+        Path(dump_wm).mkdir(parents=True, exist_ok=True)
+        for i, e in enumerate(eps):
+            rows = dump[i]
+            if len(rows) < 2:
+                continue
+            geo = np.array([r["geodesic"] for r in rows], np.float32)
+            reward = np.zeros(len(rows), np.float32)
+            reward[1:] = geo[:-1] - geo[1:]
+            is_first = np.zeros(len(rows), bool)
+            is_first[0] = True
+            np.savez_compressed(Path(dump_wm) / f"{e['id'].replace('/', '_')}.npz",
+                                image=np.stack([r["image"] for r in rows]), vector=np.stack([r["vector"] for r in rows]).astype(np.float32),
+                                action=np.stack([r["action"] for r in rows]), reward=reward,
+                                clearance=np.array([r["clearance"] for r in rows], np.float32),
+                                target_vis=np.array([r["target_vis"] for r in rows]), at_goal=np.array([r["at_goal"] for r in rows]),
+                                stop=np.zeros(len(rows), bool), is_first=is_first,
+                                is_terminal=np.array([r["is_terminal"] for r in rows]), geodesic=geo,
+                                meta=json.dumps({"subset": e["id"].split("/")[0], "episode_index": int(e["id"].split("/")[1]),
+                                                 "house": e["house"], "instruction": e["instruction"], "source": "policy",
+                                                 "status": status[i]}))
     del renderer
     return res
 
@@ -328,8 +408,9 @@ def main():
     ap.add_argument("--ids", nargs="*", default=None, help="only these episode ids (subset/episode_index)")
     ap.add_argument("--record", action="store_true", help="save 10 Hz onboard frames + trajectories for videos")
     ap.add_argument("--candidates", type=int, default=1, help="chunks sampled per decision (different fixed noise each)")
-    ap.add_argument("--select", default="first", choices=["first", "random", "oracle", "oracle_motion"],
-                    help="pick among candidates; oracle* use privileged sim info (best-of-N upper bound)")
+    ap.add_argument("--select", default="first", choices=["first", "random", "oracle", "oracle_motion", "wm", "wm_motion"],
+                    help="pick among candidates; oracle* use privileged sim info (upper bound), wm* the learned world model")
+    ap.add_argument("--dump-wm", default=None, help="directory: save every episode as world-model replay (RGB-D, actions, labels)")
     ap.add_argument("--tentative-stop", default="hover", choices=["hover", "continue"],
                     help="on the first stop vote: hover in place (v0) or keep flying the previous chunk")
     args = ap.parse_args()
@@ -371,7 +452,7 @@ def main():
                           fixed_noise=not args.resample_noise, stop_consecutive=args.stop_consecutive, oracle=oracle,
                           anchor=args.anchor, min_stop_frame=args.min_stop_frame,
                           record_dir=(out_dir / "record") if args.record else None, candidates=args.candidates,
-                          select=args.select, tentative_stop=args.tentative_stop)
+                          select=args.select, tentative_stop=args.tentative_stop, dump_wm=args.dump_wm)
             results += r
             sr = np.mean([x["success"] for x in r])
             print(f"{house}: {len(r)} eps, SR {sr:.2f}, status {dict(zip(*np.unique([x['status'] for x in r], return_counts=True)))}",

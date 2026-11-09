@@ -27,6 +27,12 @@ def main():
     ap.add_argument("--denoise-steps", type=int, default=5)
     ap.add_argument("--blind", action="store_true")
     ap.add_argument("--shuffle-instructions", action="store_true", help="language ablation: permute within batch")
+    ap.add_argument("--wm", default=None, help="chunk world model checkpoint (sakana_vla.wm): scores candidate chunks")
+    ap.add_argument("--wm-lam-col", type=float, default=10.0)
+    ap.add_argument("--wm-lam-clr", type=float, default=5.0)
+    ap.add_argument("--wm-mu-vis", type=float, default=0.5)
+    ap.add_argument("--wm-stop-bonus", type=float, default=2.0)
+    ap.add_argument("--wm-steps", type=int, default=2, help="imagined 0.5 s steps per candidate")
     args = ap.parse_args()
     run = Path(args.run)
     ckpt = torch.load(run / "checkpoint.pt", map_location="cpu", weights_only=False)
@@ -36,6 +42,12 @@ def main():
     if "vlm" in ckpt:
         model.vlm.load_state_dict(ckpt["vlm"])
     model.eval()
+    verifier = None
+    if args.wm:
+        from ..wm.verifier import ChunkVerifier
+        verifier = ChunkVerifier(args.wm, lam_col=args.wm_lam_col, lam_clr=args.wm_lam_clr, mu_vis=args.wm_mu_vis,
+                                 stop_bonus=args.wm_stop_bonus, steps=args.wm_steps)
+        print(f"world-model verifier: {args.wm} (step {verifier.step})", flush=True)
     collate = Collator(AutoProcessor.from_pretrained(targs["vlm"]))
     s_mean, s_std = np.asarray(stats["state_mean"], np.float32), np.asarray(stats["state_std"], np.float32)
     rng = np.random.default_rng(0)
@@ -51,6 +63,9 @@ def main():
                     req = conn.recv()
                     if req == "close":
                         return
+                    wm_req = req.get("wm")
+                    if wm_req is not None and verifier is not None:
+                        verifier.observe(wm_req["ids"], wm_req["obs"], req["states"], wm_req["prev_actions"], wm_req["is_first"])
                     instr = list(req["instructions"])
                     if args.shuffle_instructions and len(instr) > 1:
                         instr = [instr[i] for i in rng.permutation(len(instr))]
@@ -67,7 +82,17 @@ def main():
                                              for sd in req["seeds"] for k in range(n_samples)]).cuda()
                     with torch.autocast("cuda", dtype=torch.bfloat16):
                         x = model.sample(batch, steps=args.denoise_steps, noise=noise, n_samples=n_samples)
-                    conn.send(denormalize_actions(x.float().cpu().numpy(), stats))
+                    out = denormalize_actions(x.float().cpu().numpy(), stats)
+                    if wm_req is None:
+                        conn.send(out)
+                    else:
+                        resp = {"chunks": out, "wm_scores": None, "wm_goal": None, "wm_parts": None}
+                        if verifier is not None:
+                            if out.ndim == 4:
+                                resp["wm_scores"], resp["wm_goal"], resp["wm_parts"] = verifier.score(wm_req["ids"], out)
+                            else:
+                                resp["wm_goal"] = verifier.at_goal(wm_req["ids"])
+                        conn.send(resp)
             except EOFError:
                 pass
             finally:
