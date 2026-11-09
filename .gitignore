@@ -1,0 +1,8 @@
+data/
+__pycache__/
+*.pyc
+*.mp4
+*.npz
+*.parquet
+logs/
+runs/
