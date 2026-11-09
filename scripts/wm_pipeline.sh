@@ -8,7 +8,7 @@
 #   eval <wm_ckpt> <N>    closed loop with --select wm / wm_motion on the 32-episode unseen set
 set -e
 cd "$(dirname "$0")/.."
-export UV_USE_IO_URING=0 PATH=$HOME/miniconda3/envs/sakana_hyperdrone/bin:$PATH HYPERLUX_BACKEND=${HYPERLUX_BACKEND:-OPTIX} PYTHONPATH=$PWD
+export HYPERLUX_SKIP_BUILD=${HYPERLUX_SKIP_BUILD:-1} UV_USE_IO_URING=0 PATH=$HOME/miniconda3/envs/sakana_hyperdrone/bin:$PATH HYPERLUX_BACKEND=${HYPERLUX_BACKEND:-OPTIX} PYTHONPATH=$PWD
 VLA2=$HOME/miniconda3/envs/sakana_vla2/bin/python
 RUN=${RUN:-runs/v1_stageA}
 CL="python -u -m sakana_vla.eval.closed_loop --run $RUN --batch 16 --videos 0"
