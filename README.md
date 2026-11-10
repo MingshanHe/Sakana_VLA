@@ -75,6 +75,8 @@ This branch (`vla`) holds the first, pure-VLA version of the code only: dataset 
 
 v0 follows OpenFlyV2 without MAM and MSP: a Qwen3.5-0.8B prefix plus a 233M flow-matching action Expert in pi0 style.
 
+Code walkthrough (中文): [docs/code_guide.md](docs/code_guide.md).
+
 Reports, figures and videos live on [`master`](https://github.com/MingshanHe/Sakana_VLA/tree/master/docs). The Dreamer world-model verifier lives on [`wm-verifier`](https://github.com/MingshanHe/Sakana_VLA/tree/wm-verifier).
 
 | file | role |
