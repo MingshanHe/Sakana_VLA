@@ -156,25 +156,42 @@ def yaw_profile(xyz, yaw0, yaw_goal, dt=0.01, yaw_rate=1.2, face_dist=1.0):
     return out
 
 
-def rotate_in_place(p, yaw0, yaw1, dt=0.01, yaw_rate=0.8):
-    n = max(1, int(np.ceil(abs(wrap(yaw1 - yaw0)) / (yaw_rate * dt))))
-    yaw = yaw0 + wrap(yaw1 - yaw0) * np.linspace(0, 1, n + 1)[1:]
+def rotate_in_place(p, yaw0, yaw1, dt=0.01, yaw_rate=0.8, direction=None):
+    """direction: None = shortest way; +1 / -1 = always turn left (counter-clockwise) / right."""
+    delta = wrap(yaw1 - yaw0)
+    if direction is not None:
+        delta = direction * ((direction * (yaw1 - yaw0)) % (2 * np.pi))
+    n = max(1, int(np.ceil(abs(delta) / (yaw_rate * dt))))
+    yaw = yaw0 + delta * np.linspace(0, 1, n + 1)[1:]
     return np.repeat(p[None], n, axis=0), yaw
 
 
+def descend(p, z_end, dt=0.01, speed=0.2):
+    """Vertical move from p to z_end with a smooth (cosine) speed profile; mean speed `speed`."""
+    n = max(1, int(np.ceil(abs(z_end - p[2]) / (speed * dt))))
+    s = 0.5 - 0.5 * np.cos(np.pi * np.linspace(0, 1, n + 1)[1:])
+    out = np.repeat(np.asarray(p, dtype=np.float64)[None], n, axis=0)
+    out[:, 2] = p[2] + (z_end - p[2]) * s
+    return out
+
+
 def reference_trajectory(field, p0, yaw0, goal_xyz, target_xyz, dt=0.01, v_max=0.5, a_max=0.5, v0=None,
-                         rotate_first_threshold=np.deg2rad(60), final_hover=1.0):
+                         rotate_first_threshold=np.deg2rad(60), final_hover=1.0, yaw_goal=None, land_z=None,
+                         first_turn=None):
     """Full reference (N, 4) = [x, y, z, yaw] at dt from p0/yaw0 to the goal viewpoint, then hover facing target.
 
     v0: current velocity (replans start moving). Returns (ref, phases) with phases[i] in
-    {"rotate", "fly", "hover"}; None if unreachable.
+    {"rotate", "fly", "land", "hover"}; None if unreachable.
+    yaw_goal: final yaw (default: face target_xyz from the goal). land_z: after reaching the goal, descend
+    vertically to this height before hovering. first_turn: +1 / -1 forces the direction of the initial in-place turn.
     """
     raw = field.path(p0)
     if len(raw) == 0:
         return None, None
     raw = np.vstack([raw[:-1], goal_xyz]) if len(raw) > 1 else np.vstack([p0, goal_xyz])
     spline, length = smooth_path(field.maps, raw, start=np.asarray(p0, dtype=np.float64))
-    yaw_goal = float(np.arctan2(target_xyz[1] - goal_xyz[1], target_xyz[0] - goal_xyz[0]))
+    if yaw_goal is None:
+        yaw_goal = float(np.arctan2(target_xyz[1] - goal_xyz[1], target_xyz[0] - goal_xyz[0]))
     parts, phases = [], []
     speed0 = 0.0 if v0 is None else float(np.linalg.norm(v0))
     if spline is not None and length > 0.05:
@@ -182,10 +199,10 @@ def reference_trajectory(field, p0, yaw0, goal_xyz, target_xyz, dt=0.01, v_max=0
         xyz = spline(s)
         start_dir = np.arctan2(*(xyz[min(len(xyz) - 1, 30)] - xyz[0])[[1, 0]])
         if speed0 < 0.1 and abs(wrap(start_dir - yaw0)) > rotate_first_threshold:
-            rp, ry = rotate_in_place(np.asarray(p0, dtype=np.float64), yaw0, start_dir, dt)
+            rp, ry = rotate_in_place(np.asarray(p0, dtype=np.float64), yaw0, start_dir, dt, direction=first_turn)
             parts.append(np.c_[rp, ry])
             phases += ["rotate"] * len(rp)
-            yaw0 = start_dir
+            yaw0 = ry[-1]
         yaw = yaw_profile(xyz, yaw0, yaw_goal, dt)
         parts.append(np.c_[xyz, yaw])
         phases += ["fly"] * len(xyz)
@@ -196,6 +213,15 @@ def reference_trajectory(field, p0, yaw0, goal_xyz, target_xyz, dt=0.01, v_max=0
         rp, ry = rotate_in_place(end_p, end_yaw, yaw_goal, dt)
         parts.append(np.c_[rp, ry])
         phases += ["rotate"] * len(rp)
+        end_yaw = ry[-1]
+    else:
+        yaw_goal = end_yaw
+    if land_z is not None:
+        lp = descend(end_p, land_z, dt)
+        parts.append(np.c_[lp, np.full(len(lp), end_yaw)])
+        phases += ["land"] * len(lp)
+        end_p = lp[-1]
+    yaw_goal = end_yaw
     n_hover = int(final_hover / dt)
     parts.append(np.c_[np.repeat(end_p[None], n_hover, 0), np.full(n_hover, yaw_goal)])
     phases += ["hover"] * n_hover

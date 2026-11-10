@@ -41,7 +41,8 @@ class Episode:
         self.goal = np.asarray(spec["goal"])
         self.target = np.asarray(spec["target"]["center"])
         p0, yaw0 = np.asarray(spec["start"]["position"]), spec["start"]["yaw"]
-        self.ref, self.phases = reference_trajectory(field, p0, yaw0, self.goal, self.target)
+        self.plan = {k: v for k, v in (spec.get("plan") or {}).items() if v is not None}
+        self.ref, self.phases = reference_trajectory(field, p0, yaw0, self.goal, self.target, **self.plan)
         self.k = 0                       # index into self.ref
         self.t = 0                       # physics step counter
         self.done = self.ref is None
@@ -108,7 +109,8 @@ def rollout(specs_fields, sim, maps, rng, perturb_prob=0.5, perturb_hold=0.4, ma
             if e.perturb_end is not None and e.t == e.perturb_end:
                 v0 = state["linear_velocity"][i]
                 y0 = float(yaw_from_quat(state["orientation"][i]))
-                ref, phases = reference_trajectory(e.field, p, y0, e.goal, e.target, v0=v0)
+                replan = {k: v for k, v in e.plan.items() if k != "first_turn"}
+                ref, phases = reference_trajectory(e.field, p, y0, e.goal, e.target, v0=v0, **replan)
                 if ref is None:
                     e.done, e.failed = True, "replan_failed"
                     continue

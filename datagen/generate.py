@@ -19,6 +19,8 @@ from . import label
 from .expert_rollout import rollout
 from .geometry import build_maps, flight_mask
 from .render import HEIGHT, WIDTH, Renderer, depth_to_mm, target_bbox
+from . import render as render_mod
+from .simple_tasks import sample_simple_episodes
 from .tasks import sample_episodes
 from .write_dataset import DatasetWriter
 
@@ -65,7 +67,12 @@ def main():
     ap.add_argument("--perturb-prob", type=float, default=0.5)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="data/vla_dataset")
+    ap.add_argument("--task-set", default="nav", choices=["nav", "simple"],
+                    help="nav: cross-room navigation (v0). simple: same-room fly_to / land with a free straight line")
+    ap.add_argument("--simple-tasks", default="fly_to,land")
+    ap.add_argument("--cam-pitch", type=float, default=0.0, help="camera pitch down from the body x axis (deg)")
     args = ap.parse_args()
+    render_mod.MOUNT_PITCH_DEG = args.cam_pitch
 
     from hyperdrone import dynamics
     rng = np.random.default_rng(args.seed)
@@ -84,7 +91,22 @@ def main():
         mask = flight_mask(maps)
         room_types = {r["id"]: r["type"] for r in meta["rooms"]}
         specs = []
-        for sf in sample_episodes(meta, maps, mask, rng, episodes_per_target=args.per_target):
+        sampler = (sample_simple_episodes(meta, maps, mask, rng, episodes_per_target=args.per_target,
+                                          tasks=tuple(args.simple_tasks.split(",")))
+                   if args.task_set == "simple" else
+                   sample_episodes(meta, maps, mask, rng, episodes_per_target=args.per_target))
+        if args.task_set == "simple":  # balance: up to half land episodes (few objects are landable), rest fly_to
+            pool = []
+            for sf in sampler:
+                pool.append(sf)
+                if len(pool) >= 4 * args.episodes_per_house:
+                    break
+            land = [sf for sf in pool if sf[0]["task"] == "land"][:args.episodes_per_house // 2]
+            other = [sf for sf in pool if sf[0]["task"] != "land"][:args.episodes_per_house - len(land)]
+            specs = land + other
+            specs = [specs[i] for i in rng.permutation(len(specs))]
+            sampler = ()
+        for sf in sampler:
             specs.append(sf)
             if len(specs) >= args.episodes_per_house:
                 break
@@ -100,7 +122,9 @@ def main():
                 continue
             arr = label.frame_arrays(e.records)
             n = len(e.records)
-            stop = label.stop_flags(arr, np.asarray(e.spec["goal"]), np.asarray(e.spec["target"]["center"]))
+            task = e.spec.get("task", "nav")
+            stop = label.stop_flags(arr, np.asarray(e.spec.get("stop_point", e.spec["goal"])),
+                                    np.asarray(e.spec["target"]["center"]), face_target=task != "land")
             if not (MIN_FRAMES <= n <= MAX_FRAMES):
                 drops["length"] += 1
                 continue
@@ -109,7 +133,7 @@ def main():
                 continue
             rgb, depth, seg = renderer.render(arr["position"], arr["orientation"])
             boxes, pix = target_bbox(seg, e.spec["target"]["segmentation_class"])
-            if pix[-1] < MIN_END_PIXELS:
+            if task != "land" and pix[-1] < MIN_END_PIXELS:  # when landed, the target is below the camera
                 drops["target_not_visible"] += 1
                 continue
             dvalid = depth[np.isfinite(depth) & (depth > 0)]
@@ -121,7 +145,7 @@ def main():
             segs = label.segments(prims)
             rooms_seq = label.room_sequence(meta, arr["position"])
             landmarks = landmarks_of(seg, labels_map, e.spec["target"]["type"])
-            instruction = label.instruction_draft(e.spec, room_types, rooms_seq, landmarks)
+            instruction = e.spec.get("instruction") or label.instruction_draft(e.spec, room_types, rooms_seq, landmarks)
             extra = {
                 "house": house, "target": e.spec["target"], "goal": e.spec["goal"], "start": e.spec["start"],
                 "geodesic": e.spec["geodesic"], "rooms": [{"id": r, "type": room_types.get(r)} for r in rooms_seq],
@@ -130,6 +154,9 @@ def main():
                 "track_err_mean": float(np.mean(e.track_err)), "track_err_max": float(np.max(e.track_err)),
                 "path_length": float(np.linalg.norm(np.diff(arr["position"], axis=0), axis=1).sum()),
                 "final_target_pixels": int(pix[-1]), "split": args.subset,
+                "task": task, "cam_pitch_deg": args.cam_pitch, "start_target_pixels": int(pix[0]),
+                "target_visible_frac": float((pix >= 20).mean()),
+                **{k: e.spec[k] for k in ("start_mode", "stop_point", "distance") if k in e.spec},
             }
             writer.add(ep_index, arr, acts, stop, prims, boxes, pix, rgb, depth_to_mm(depth), e.spec, extra,
                        instruction, keyframes_of(segs, n))

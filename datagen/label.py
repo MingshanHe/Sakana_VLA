@@ -37,10 +37,11 @@ def actions_from_states(pos, yaw, stop):
     return act.astype(np.float32)
 
 
-def stop_flags(arr, goal, target_center):
+def stop_flags(arr, goal, target_center, face_target=True):
+    """goal: the point where the episode ends (viewpoint, or the land point). face_target=False skips the yaw test."""
     yaw_goal = np.arctan2(target_center[1] - goal[1], target_center[0] - goal[0])
     near = np.linalg.norm(arr["position"] - goal, axis=1) < STOP_POS_TOL
-    facing = np.abs(wrap(arr["yaw"] - yaw_goal)) < STOP_YAW_TOL
+    facing = (np.abs(wrap(arr["yaw"] - yaw_goal)) < STOP_YAW_TOL) if face_target else np.ones(len(near), bool)
     hover = np.array([ph == "hover" for ph in arr["phase"]])
     ok = near & facing & hover
     # stop only on the trailing run (once stopped, stays stopped)
