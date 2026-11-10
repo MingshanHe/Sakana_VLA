@@ -462,6 +462,85 @@ def fig_episodes(out, vids=RUN / "videos"):
     save(fig, out, "fig9_episodes.png")
 
 
+# ----------------------------------------------------------------------------------------------- 12. Dreamer x VLA
+def fig_wm_arch(out):
+    """docs/report_v1.md: the VLA proposes N candidate chunks, a DreamerV3 world model scores them in imagination."""
+    fig, ax = canvas(16.4, 9.0)
+    yb, hb = 5.3, 2.6
+    box(ax, 0.2, yb, 2.6, hb, "Inputs", "RGB 256 x 256\ninstruction\nstate (velocity,\nyaw rate, height)", fc="#ffffff", ec=BLUE)
+    box(ax, 3.4, yb, 3.8, hb, "SakanaVLA (v0, unchanged)", "Qwen3.5-0.8B + action expert\none VLM pass, N noise seeds\n"
+        "-> N action chunks\n12 x [dx, dy, dz, dyaw, stop]", fc=TINT_ORANGE, ec=ORANGE)
+    box(ax, 7.8, yb, 2.6, hb, "Candidates", "N policy samples\n+ 4 hand-made:\nhover, turn left / right,\nslow forward",
+        fc="#ffffff", ec=ORANGE)
+    box(ax, 11.0, yb, 5.2, hb, "World model (DreamerV3 RSSM)", "53M params, one step = 0.5 s = one decision\n"
+        "imagine the first 1.0 s of every candidate\nheads: progress, collision, clearance,\ntarget visible, at goal",
+        fc=TINT_AQUA, ec=AQUA)
+    ym = yb + hb / 2
+    arrow(ax, (2.8, ym), (3.4, ym))
+    arrow(ax, (7.2, ym), (7.8, ym))
+    arrow(ax, (10.4, ym), (11.0, ym))
+    yb2, hb2 = 2.0, 2.0
+    box(ax, 11.0, yb2, 5.2, hb2, "Score and pick", "score = progress - 10 P(collision)\n- 5 max(0, 0.22 m - clearance) + 0.5 P(target visible)\n"
+        "stop candidate: +2 if P(at goal) > 0.5, else -2", fc="#ffffff", ec=AQUA, body_size=8.3)
+    arrow(ax, (13.6, yb), (13.6, yb2 + hb2), text="predicted outcomes\nof each candidate", text_off=(0.15, -0.3), ha="left", fs=8)
+    box(ax, 5.6, yb2, 3.9, hb2, "Executor (simulator)", "fly the chosen chunk for 0.5 s\n(RAPTOR position control)\nthen ask again",
+        fc=TINT_GRAY, ec=MUTED)
+    arrow(ax, (11.0, yb2 + hb2 / 2), (9.5, yb2 + hb2 / 2), text="best chunk", text_off=(0, 0.08))
+    # feedback 1: new camera image and state -> inputs
+    ax.plot([5.6, 1.5, 1.5], [yb2 + 0.5, yb2 + 0.5, yb - 0.6], color=INK2, lw=1.4)
+    arrow(ax, (1.5, yb - 0.6), (1.5, yb))
+    ax.text(3.5, yb2 + 0.58, "next RGB + state (every 0.5 s)", ha="center", va="bottom", fontsize=8.5, color=INK2)
+    # feedback 2: RGB-D + executed increments -> RSSM posterior
+    ax.add_patch(FancyArrowPatch((8.6, yb2 + hb2), (11.3, yb), connectionstyle="arc3,rad=-0.25", arrowstyle="-|>",
+                                 mutation_scale=13, color=AQUA, lw=1.6))
+    ax.text(8.3, 4.12, "RGB-D 64 x 64 + the 5 executed\nincrements -> update the RSSM\nstate (the model's memory)", ha="right",
+            va="bottom", fontsize=8.3, color=AQUA, weight="bold", linespacing=1.3)
+    ax.text(0.2, 1.45, "Oracle verifier (upper bound): the same loop, but the score comes from privileged simulator information\n"
+            "(true shortest-path progress, true clearance, true 'at goal').  Learned verifier: the world model above.\n"
+            "Selection rules: wm = stop only when the policy proposes it and the model agrees;  wm_shield = keep the policy's\n"
+            "own chunk unless the model predicts a collision or low clearance.", fontsize=9.3, color=INK, va="top", linespacing=1.55)
+    save(fig, out, "fig12_wm_arch.png")
+
+
+def fig_wm_step(out):
+    """docs/report_v1.md: what one world-model step (0.5 s) contains and where the labels come from."""
+    fig, ax = canvas(16.4, 6.9)
+    y_ax = 3.7
+    ax.plot([0.8, 15.6], [y_ax, y_ax], color=INK2, lw=1.6)
+    ax.add_patch(FancyArrowPatch((15.3, y_ax), (15.8, y_ax), arrowstyle="-|>", mutation_scale=14, color=INK2, lw=1.6))
+    ticks = {3.0: "t - 0.5 s\n(decision k - 1)", 8.0: "t\n(decision k)", 13.0: "t + 0.5 s\n(decision k + 1)"}
+    for x, lab in ticks.items():
+        ax.plot([x, x], [y_ax - 0.15, y_ax + 0.15], color=INK2, lw=1.6)
+        ax.text(x, y_ax - 0.3, lab, ha="center", va="top", fontsize=9, color=INK2, linespacing=1.3)
+    for x in (3.0, 8.0, 13.0):
+        box(ax, x - 1.25, y_ax + 0.45, 2.5, 1.55, "Observation", "RGB-D 64 x 64 (4 ch)\nstate: velocity (3),\nyaw rate, height",
+            fc=TINT_BLUE, ec=BLUE, body_size=8.2)
+    for x0, x1 in ((3.0, 8.0), (8.0, 13.0)):
+        xm = (x0 + x1) / 2
+        ax.add_patch(FancyArrowPatch((x0 + 1.3, y_ax + 1.2), (x1 - 1.3, y_ax + 1.2), arrowstyle="-|>", mutation_scale=12,
+                                     color=ORANGE, lw=1.6))
+        ax.text(xm, y_ax + 1.3, "action: 5 increments\n[dx, dy, dz, dyaw, stop] x 5\n(the first 0.5 s of a chunk)", ha="center",
+                va="bottom", fontsize=8.3, color=ORANGE, weight="bold", linespacing=1.3)
+    ax.text(8.2, 6.4, "RSSM:  h(k+1) = f(h(k), z(k), a(k));   z from the observation (training, posterior)  or  from h alone "
+            "(imagination, prior)", ha="center", va="top", fontsize=9.3, color=INK, weight="bold")
+    # labels at k+1
+    box(ax, 9.3, 0.3, 6.9, 2.2, "Labels at t + 0.5 s  (the outcome of action k)",
+        "progress  = shortest-path distance(t) - distance(t + 0.5 s)   [m]\n"
+        "collision  = hit a surface during the step (< 0.12 m)         [0/1]\n"
+        "clearance = smallest distance to any surface during the step [m]\n"
+        "target visible = target covers >= 150 pixels                  [0/1]\n"
+        "at goal    = <= 1 m from the goal view and target visible      [0/1]",
+        fc="#ffffff", ec=AQUA, body_size=8.4)
+    arrow(ax, (13.0, y_ax - 1.0), (13.0, 2.5), color=AQUA)
+    box(ax, 0.3, 0.3, 8.3, 2.2, "Where the steps come from",
+        "expert dataset: 1,723 episodes -> 52k steps (every 5th frame); no collisions\n"
+        "VLA's own closed-loop flights (closed_loop --dump-wm): one step per decision,\n"
+        "a collision ends the episode with a terminal step (collision = 1)\n"
+        "shortest-path distance and clearance come from the 3D map of the house",
+        fc=TINT_GRAY, ec=MUTED, body_size=8.4)
+    save(fig, out, "fig13_wm_step.png")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="docs/assets")
@@ -470,7 +549,8 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     figs = {"pipeline": fig_pipeline, "sample": fig_sample, "action": fig_action, "model": fig_model, "loop": fig_loop,
-            "training": fig_training, "results": fig_results, "episodes": fig_episodes}
+            "training": fig_training, "results": fig_results, "episodes": fig_episodes,
+            "wm_arch": fig_wm_arch, "wm_step": fig_wm_step}
     for k, fn in figs.items():
         if args.only is None or k in args.only:
             fn(out)

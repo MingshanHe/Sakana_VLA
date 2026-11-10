@@ -2,7 +2,7 @@
 
 日期：2026-11-09　|　代码：[MingshanHe/Sakana_VLA](https://github.com/MingshanHe/Sakana_VLA)　|　数据：[hemingshan/vla_dataset](https://huggingface.co/datasets/hemingshan/vla_dataset)
 
-这份报告总结第一阶段：做了什么，框架怎么搭的，模型怎么训练、怎么测试，结果如何。所有图都可以用 `scripts/report_figures.py` 重新生成。英文的简短版本见 [`v0_results.md`](v0_results.md)。
+这份报告总结第一阶段：做了什么，框架怎么搭的，模型怎么训练、怎么测试，结果如何。所有图都可以用 `scripts/report_figures.py` 重新生成。英文的简短版本见 [`v0_results.md`](v0_results.md)。第二阶段（把 Dreamer 世界模型接到 VLA 上）见 [`report_v1.md`](report_v1.md)。
 
 ---
 

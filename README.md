@@ -73,6 +73,8 @@ Per-frame columns:
 
 v0 follows OpenFlyV2 without MAM and MSP: a Qwen3.5-0.8B prefix plus a 233M flow-matching action Expert in pi0 style. The full stage report, with figures and videos, is [docs/report.md](docs/report.md) (中文). A short bilingual summary is [docs/v0_results.md](docs/v0_results.md).
 
+Stage 2 (branch [`wm-verifier`](https://github.com/MingshanHe/Sakana_VLA/tree/wm-verifier), not merged): the VLA proposes N candidate chunks and a DreamerV3 world model scores them in imagination. Report: [docs/report_v1.md](docs/report_v1.md) (中文). Plans: [docs/wm_verifier_plan.md](docs/wm_verifier_plan.md), [docs/v1_plan.md](docs/v1_plan.md).
+
 | file | role |
 |---|---|
 | `sakana_vla/model/expert.py` | Expert decoder (Qwen3.5 hybrid layers, 640 wide). `PrefixKV` is a read-only view of the VLM cache |
